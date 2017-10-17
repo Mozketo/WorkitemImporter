@@ -3,6 +3,8 @@ using Microsoft.TeamFoundation.WorkItemTracking.WebApi;
 using Microsoft.TeamFoundation.WorkItemTracking.WebApi.Models;
 using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.WebApi;
+using Microsoft.VisualStudio.Services.WebApi.Patch;
+using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -22,7 +24,7 @@ namespace WorkitemImporter
             VstsConfig = vstsConfig;
         }
 
-        public async Task ProcessAsync()
+        public void Process()
         {
             var connection = new VssConnection(new Uri(VstsConfig.Url), new VssBasicCredential(string.Empty, VstsConfig.PersonalAccessToken));
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
@@ -30,40 +32,47 @@ namespace WorkitemImporter
             var jql = "project = 'LT Excelens' and status not in (done)";
 
             var jiraConn = Jira.CreateRestClient(JiraConfig.Url, JiraConfig.UserId, JiraConfig.Password);
-            //var issues = await jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0);
-            var issues = (from i in jiraConn.Issues.Queryable
-                          where i.Project.Equals(JiraConfig.Project)
-                          orderby i.Created
-                          select i).ToList();
 
             // Perhaps a sync Open sprints + backlog only?
 
+            int take = 20;
+            var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
+            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null).Distinct().ToList();
+
+            // Get the existing iterations defined in VSTS
+            var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result;
+
+            foreach (var sprint in sprints)
+            {
+                if (!iterations.Children.Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
+                {
+                    // Add any missing VSTS iterations to map the Jira tickets to 
+                    var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
+                }
+            }
+
             foreach (var issue in issues)
             {
-                // Get the existing iterations defined in VSTS
-                var all = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result;
-
-                // Navigate in the existing iterations and if necessary, create new values:
-                var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = iterationName, }, projectName, TreeStructureGroup.Iterations, parentPath).Result;
-
-                // Create the JSON necessary to create/ update the WorkItem in VSTS JsonPatchDocument document = new JsonPatchDocument();
-                string title = String.Format("[{0}] [{1}] {2}" + , DateTime.Now.ToLongTimeString(), issue.Key, issue.Summary);
+                // Create the JSON necessary to create/update the WorkItem in VSTS
+                string title = $"{issue.Key} {issue.Summary}";
                 title = title.Substring(0, Math.Min(title.Length, 128));
+
+                var document = new JsonPatchDocument();
                 document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.Title", Value = title });
-                if (issue.Description != null)
+                if (!string.IsNullOrEmpty(issue.Description))
                 {
                     document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.Description", Value = issue.Description });
                 }
 
-                JiraUser user = jiraConn.Users.SearchUsersAsync(issue.Reporter).Result.FirstOrDefault();
-                if (user != null)
+                var jiraUser = jiraConn.Users.SearchUsersAsync(issue.Reporter).Result.FirstOrDefault();
+                if (jiraUser != null)
                 {
-                    document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.CreatedBy", Value = user.Email });
+                    document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.CreatedBy", Value = jiraUser.Email });
                 }
 
-                // Create/Update the workitem in VSTS
-                workItem = witClient.CreateWorkItemAsync(document, project, workItemType).Result;
-                workItem = witClient.UpdateWorkItemAsync(document, id).Result;
+                //    // Create/Update the workitem in VSTS
+                //    workItem = witClient.CreateWorkItemAsync(document, project, workItemType).Result;
+                //    workItem = witClient.UpdateWorkItemAsync(document, id).Result;
             }
         }
     }
