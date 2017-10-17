@@ -21,8 +21,9 @@ namespace WorkitemImporter
                 { "vsts-project=", "VSTS project name", v => vstsConfig.Project = v},
                 { "vsts-pat=",  "VSTS Personal Access Token", v => vstsConfig.PersonalAccessToken = v },
                 { "jira-url=", "Jira URL", v => jiraConfig.Url = v},
-                { "jira-userid=",  "Jira User ID", v => jiraConfig.UserId = v },
-                { "vsts-password=", "VSTS URL", v => jiraConfig.Password = v},
+                { "jira-user=",  "Jira User ID", v => jiraConfig.UserId = v },
+                { "jira-password=", "Jira password", v => jiraConfig.Password = v},
+                { "jira-project=", "Jira project", v => jiraConfig.Project = v},
                 { "h|help",  "show this message and exit", v => showHelp = v != null },
             };
 
@@ -44,6 +45,9 @@ namespace WorkitemImporter
                 ShowHelp(p);
                 return;
             }
+
+            var sync = new Sync(vstsConfig, jiraConfig);
+            sync.ProcessAsync();
         }
 
         static void ShowHelp(OptionSet p)
@@ -75,6 +79,7 @@ namespace WorkitemImporter
 
     public sealed class JiraConfig
     {
+        public string Project { get; set; }
         public string UserId { get; set; }
         public string Password { get; set; }
         string url;
