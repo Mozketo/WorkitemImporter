@@ -34,20 +34,28 @@ namespace WorkitemImporter
             {
                 // Before uploading issues to VSTS ensure all Epics are in place for wiring up
                 var epics = jiraConn.Issues.GetIssuesFromJqlAsync($"{jql} and type = epic and sprint is empty", startAt: 0, maxIssues: take).Result;
-                SyncToVsts(epics);
+                //SyncToVsts(epics);
             }
 
             {
+                jql = $"{jql} and type != epic";
                 var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
-                SyncToVsts(issues);
+                var chunks = Enumerable.Range(1, (int)Math.Floor(((decimal)issues.TotalItems / take)));
+                foreach (var index in chunks)
+                {
+                    SyncToVsts(issues);
+                    issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
+                }
             }
         }
 
         void SyncToVsts(IEnumerable<Issue> issues)
         {
+            if (!issues.AsEmptyIfNull().Any()) return;
+
             var connection = new VssConnection(new Uri(VstsConfig.Url), new VssBasicCredential(string.Empty, VstsConfig.PersonalAccessToken));
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
-            //var x = witClient.GetWorkItemAsync(14).Result;
+            //var x = witClient.GetWorkItemAsync(49).Result;
 
             // Get the existing iterations defined in VSTS
             IEnumerable<WorkItemClassificationNode> GetIterations()
@@ -59,10 +67,11 @@ namespace WorkitemImporter
             var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null).Distinct().ToList();
             foreach (var sprint in sprints)
             {
-                if (!GetIterations().Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
+                var sprintName = sprint.Replace("/", "");
+                if (!GetIterations().Any(i => i.Name.Equals(sprintName, StringComparison.OrdinalIgnoreCase)))
                 {
                     // Add any missing VSTS iterations to map the Jira tickets to 
-                    var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
+                    var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprintName, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
                 }
             }
 
@@ -105,7 +114,7 @@ namespace WorkitemImporter
                     AddField(doc, "System.IterationID", iteration?.Id);
                 }
 
-                //AddProp(doc, "Microsoft.VSTS.Scheduling.StoryPoints", issue.CustomFields["Story Points"].Values.FirstOrDefault());
+                AddField(doc, "Microsoft.VSTS.Scheduling.StoryPoints", issue.CustomFields["Story Points"]?.Values.FirstOrDefault());
                 AddField(doc, "System.State", issue.Status.ToVsts());
                 AddField(doc, "Microsoft.VSTS.Common.Priority", issue.Priority.ToVsts());
                 AddField(doc, "System.Tags", string.Join(";", issue.Labels));
@@ -115,6 +124,27 @@ namespace WorkitemImporter
                     AddField(doc, "System.CreatedDate", issue.Created);
                     AddField(doc, "System.ChangedDate", issue.Updated);
                     AddField(doc, "System.History", $"Import from Jira {DateTime.Now} (NZ). Original Jira ID: {issue.Key}");
+                }
+
+                var epicLink = issue.CustomFields["Epic Link"]?.Values.FirstOrDefault();
+                if (!string.IsNullOrEmpty(epicLink))
+                {
+                    var epic = WorkItemExists(epicLink);
+                    if (epic.exists)
+                    {
+                        var targetWorkItem = witClient.GetWorkItemAsync(epic.id.Value).Result;
+                        doc.Add(new JsonPatchOperation()
+                        {
+                            Operation = Operation.Add,
+                            Path = "/relations/-",
+                            Value = new
+                            {
+                                rel = "System.LinkTypes.Hierarchy-Reverse",
+                                url = targetWorkItem.Url,
+                                attributes = new { comment = "Link supplied via Jira import" }
+                            }
+                        });
+                    }
                 }
 
                 // Create/Update the workitem in VSTS
@@ -144,14 +174,24 @@ namespace WorkitemImporter
 
         public static string ToVsts(this IssuePriority issue)
         {
-            return issue.ToString().Replace("P", string.Empty);
+            bool eq(IssuePriority a, string b) => a.ToString().Equals(b, StringComparison.OrdinalIgnoreCase);
+            if (eq(issue, "P1")) return "1";
+            if (eq(issue, "P2")) return "2";
+            if (eq(issue, "P3")) return "3";
+            if (eq(issue, "P4")) return "4";
+            if (eq(issue, "P5")) return "4";
+            if (eq(issue, "Critical")) return "2";
+            if (eq(issue, "Major")) return "2";
+            if (eq(issue, "Minor")) return "3";
+            if (eq(issue, "Trivial")) return "4";
+            return "4";
         }
 
         public static string ToVsts(this IssueType issue)
         {
             bool eq(IssueType a, string b) => a.ToString().Equals(b, StringComparison.OrdinalIgnoreCase);
             if (eq(issue, "Story")) return "User Story";
-            if (eq(issue, "Epic")) return "Epic";
+            if (eq(issue, "Epic")) return "Feature";
             if (eq(issue, "Bug")) return "Bug";
             if (eq(issue, "Sub-task")) return "Task";
             return "Task";
