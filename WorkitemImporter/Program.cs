@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Linq;
 using System.Reflection;
 using WorkitemImporter.Infrastructure;
 
@@ -57,7 +58,14 @@ namespace WorkitemImporter
             }
 
             var queries = ConfigurationManager.AppSettings[Const.JiraQueries]
-                .GetParts(Environment.NewLine).Trim();
+                .GetParts(Environment.NewLine)
+                .Trim().RemoveComments();
+
+            if (queries == null || !queries.Any())
+            {
+                Console.WriteLine($"Add a Jira query in appSettings to sync. Example: project = 'projectname' and status not in (done) and type = epic and sprint is empty");
+                return;
+            }
 
             var sync = new Sync(vstsConfig, jiraConfig);
             sync.Process(queries, previewMode);
