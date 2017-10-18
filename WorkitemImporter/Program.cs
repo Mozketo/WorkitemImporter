@@ -1,13 +1,20 @@
 ﻿using NDesk.Options;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
+using WorkitemImporter.Infrastructure;
 
 namespace WorkitemImporter
 {
+    public static class Const
+    {
+        public const string JiraQueries = "Jira.Queries";
+    }
+
     class Program
     {
         static void Main(string[] args)
@@ -46,8 +53,11 @@ namespace WorkitemImporter
                 return;
             }
 
+            var queries = ConfigurationManager.AppSettings[Const.JiraQueries]
+                .GetParts(Environment.NewLine).Trim();
+
             var sync = new Sync(vstsConfig, jiraConfig);
-            sync.Process();
+            sync.Process(queries);
         }
 
         static void ShowHelp(OptionSet p)

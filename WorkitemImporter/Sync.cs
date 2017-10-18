@@ -25,28 +25,49 @@ namespace WorkitemImporter
             VstsConfig = vstsConfig;
         }
 
-        public void Process()
+        public void Process(IEnumerable<string> jiraQueries)
         {
-            const int take = 25;
-            var jiraConn = Jira.CreateRestClient(JiraConfig.Url, JiraConfig.UserId, JiraConfig.Password);
-            var jql = "project = 'LT Excelens' and status not in (done)";
-
+            int numberOfChunks(int total, int size)
             {
-                // Before uploading issues to VSTS ensure all Epics are in place for wiring up
-                var epics = jiraConn.Issues.GetIssuesFromJqlAsync($"{jql} and type = epic and sprint is empty", startAt: 0, maxIssues: take).Result;
-                //SyncToVsts(epics);
+                if (size == 0) return 0;
+                var result = Math.Floor(((decimal)total / size));
+                return (int)Math.Max(result, 1);
             }
 
+            const int take = 25;
+            var jiraConn = Jira.CreateRestClient(JiraConfig.Url, JiraConfig.UserId, JiraConfig.Password);
+
+            foreach (var jql in jiraQueries)
             {
-                jql = $"{jql} and type != epic";
                 var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
-                var chunks = Enumerable.Range(1, (int)Math.Floor(((decimal)issues.TotalItems / take)));
+                Console.WriteLine($"Fetching {issues.TotalItems} from Jira '{jql}'");
+                var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
                     SyncToVsts(issues);
                     issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
+                    Console.WriteLine($"Fetching chunk {index * take}, retrieving {issues.Count()} items");
                 }
             }
+
+            //var jql = "project = 'LT Excelens' and status not in (done)";
+
+            //{
+            //    // Before uploading issues to VSTS ensure all Epics are in place for wiring up
+            //    var epics = jiraConn.Issues.GetIssuesFromJqlAsync($"{jql} and type = epic and sprint is empty", startAt: 0, maxIssues: take).Result;
+            //    //SyncToVsts(epics);
+            //}
+
+            //{
+            //    jql = $"{jql} and type != epic";
+            //    var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
+            //    var chunks = Enumerable.Range(1, (int)Math.Floor(((decimal)issues.TotalItems / take)));
+            //    foreach (var index in chunks)
+            //    {
+            //        SyncToVsts(issues);
+            //        issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
+            //    }
+            //}
         }
 
         void SyncToVsts(IEnumerable<Issue> issues)
