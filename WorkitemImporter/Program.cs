@@ -69,6 +69,8 @@ namespace WorkitemImporter
 
             var sync = new Sync(vstsConfig, jiraConfig);
             sync.Process(queries, previewMode);
+
+            Console.WriteLine("Sync complete");
         }
 
         static void ShowHelp(OptionSet p)

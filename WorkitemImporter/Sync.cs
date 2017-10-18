@@ -51,25 +51,6 @@ namespace WorkitemImporter
                     Console.WriteLine($"  Fetching chunk {index * take}, retrieving {issues.Count()} items");
                 }
             }
-
-            //var jql = "project = 'LT Excelens' and status not in (done)";
-
-            //{
-            //    // Before uploading issues to VSTS ensure all Epics are in place for wiring up
-            //    var epics = jiraConn.Issues.GetIssuesFromJqlAsync($"{jql} and type = epic and sprint is empty", startAt: 0, maxIssues: take).Result;
-            //    //SyncToVsts(epics);
-            //}
-
-            //{
-            //    jql = $"{jql} and type != epic";
-            //    var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
-            //    var chunks = Enumerable.Range(1, (int)Math.Floor(((decimal)issues.TotalItems / take)));
-            //    foreach (var index in chunks)
-            //    {
-            //        SyncToVsts(issues);
-            //        issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
-            //    }
-            //}
         }
 
         void SyncToVsts(IEnumerable<Issue> issues, bool previewMode = false)
