@@ -40,38 +40,61 @@ namespace WorkitemImporter
             var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null).Distinct().ToList();
 
             // Get the existing iterations defined in VSTS
-            var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result;
+            IEnumerable<WorkItemClassificationNode> GetIterations()
+            {
+                var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result;
+                return iterations.Children;
+            }
 
             foreach (var sprint in sprints)
             {
-                if (!iterations.Children.Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
+                if (!GetIterations().Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
                 {
                     // Add any missing VSTS iterations to map the Jira tickets to 
                     var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
                 }
             }
 
+            void AddProp(JsonPatchDocument doc, string path, object value)
+            {
+                if (value is null) return;
+                if (value is string && string.IsNullOrEmpty(value.ToString())) return;
+                doc.Add(new JsonPatchOperation { Operation = Operation.Add, Path = path, Value = value.ToString() });
+            }
+
             foreach (var issue in issues)
             {
                 // Create the JSON necessary to create/update the WorkItem in VSTS
-                string title = $"{issue.Key} {issue.Summary}";
-                title = title.Substring(0, Math.Min(title.Length, 128));
+                //string title = $"{issue.Key} {issue.Summary}";
+                //title = title.Substring(0, Math.Min(title.Length, 128));
 
-                var document = new JsonPatchDocument();
-                document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.Title", Value = title });
-                if (!string.IsNullOrEmpty(issue.Description))
-                {
-                    document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.Description", Value = issue.Description });
-                }
+                var doc = new JsonPatchDocument();
+
+                AddProp(doc, "/fields/System.Title", issue.Summary);
+                AddProp(doc, "/fields/System.Description", issue.Description);
 
                 var jiraUser = jiraConn.Users.SearchUsersAsync(issue.Reporter).Result.FirstOrDefault();
                 if (jiraUser != null)
                 {
-                    document.Add(new JsonPatchOperation { Operation = Operation.Add, Path = "/fields/System.CreatedBy", Value = jiraUser.Email });
+                    AddProp(doc, "/fields/System.CreatedBy", jiraUser.Email);
                 }
 
+                string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
+                if (!string.IsNullOrEmpty(issueSprint))
+                {
+                    var iteration = GetIterations().FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
+                    AddProp(doc, "/Fields/System.IterationPath", iteration?.Name);
+                }
+
+                AddProp(doc, "/Fields/System.CreatedDate", issue.Created);
+                AddProp(doc, "/Fields/System.ChangedDate", issue.Updated);
+                AddProp(doc, "/Fields/System.BoardColumn", "");
+                AddProp(doc, "/Fields/System.BoardColumnDone", issue.Resolution);
+                AddProp(doc, "/Fields/System.State", issue.Status);
+                AddProp(doc, "/Fields/Microsoft.VSTS.Common.Priority", issue.Priority);
+
                 //    // Create/Update the workitem in VSTS
-                //    workItem = witClient.CreateWorkItemAsync(document, project, workItemType).Result;
+                var workItem = witClient.CreateWorkItemAsync(doc, VstsConfig.Project, "User Story").Result;
                 //    workItem = witClient.UpdateWorkItemAsync(document, id).Result;
             }
         }
