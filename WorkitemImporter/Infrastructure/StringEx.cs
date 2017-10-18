@@ -46,5 +46,13 @@ namespace WorkitemImporter.Infrastructure
         /// <param name="separator">separator which separates the parts in the given value</param>
         /// <returns>seq of parts within the given value</returns>
         public static IEnumerable<string> GetParts(this string value, string separator) => value.GetParts(separator, excludeEmptyParts: true);
-    }
+
+        public static Dictionary<string, string> ToDictionary(this string value, string splitRows = "\n", string splitPairs = ",")
+        {
+            var result = value.GetParts(splitRows).Trim()
+                .Select(part => part.GetParts(splitPairs).ToArray())
+                .ToDictionary(split => split[0].Trim(), split => split[1].Trim());
+            return result;
+        }
+}
 }

@@ -8,9 +8,11 @@ using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
 using RestSharp.Extensions.MonoHttp;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using WorkitemImporter.Infrastructure;
 
 namespace WorkitemImporter
 {
@@ -179,43 +181,34 @@ namespace WorkitemImporter
 
     public static class JiraEx
     {
+        static Dictionary<string, string> Priority;
+        static Dictionary<string, string> Status;
+        static Dictionary<string, string> IssueType;
+
+        static JiraEx()
+        {
+            Priority = ConfigurationManager.AppSettings[Const.JiraMapPriority].ToDictionary();
+            Status = ConfigurationManager.AppSettings[Const.JiraMapStatus].ToDictionary();
+            IssueType = ConfigurationManager.AppSettings[Const.JiraMapType].ToDictionary();
+        }
+
         /// <summary>
         /// VSTS: New, Active, Closed, Removed, Resolved.
         /// JIRA: To Do, In Progress, Dev Complete, In Testing, Done.
         /// </summary>
         public static string ToVsts(this IssueStatus issue)
         {
-            bool eq(IssueStatus a, string b) => a.ToString().Equals(b, StringComparison.OrdinalIgnoreCase);
-            if (eq(issue, "to do")) return "New";
-            if (eq(issue, "In Progress")) return "Active";
-            if (eq(issue, "Dev Complete")) return "Active";
-            if (eq(issue, "In Testing")) return "Active";
-            return "Resolved";
+            return Status[issue.ToString()];
         }
 
         public static string ToVsts(this IssuePriority issue)
         {
-            bool eq(IssuePriority a, string b) => a.ToString().Equals(b, StringComparison.OrdinalIgnoreCase);
-            if (eq(issue, "P1")) return "1";
-            if (eq(issue, "P2")) return "2";
-            if (eq(issue, "P3")) return "3";
-            if (eq(issue, "P4")) return "4";
-            if (eq(issue, "P5")) return "4";
-            if (eq(issue, "Critical")) return "2";
-            if (eq(issue, "Major")) return "2";
-            if (eq(issue, "Minor")) return "3";
-            if (eq(issue, "Trivial")) return "4";
-            return "4";
+            return Priority[issue.ToString()];
         }
 
         public static string ToVsts(this IssueType issue)
         {
-            bool eq(IssueType a, string b) => a.ToString().Equals(b, StringComparison.OrdinalIgnoreCase);
-            if (eq(issue, "Story")) return "User Story";
-            if (eq(issue, "Epic")) return "Feature";
-            if (eq(issue, "Bug")) return "Bug";
-            if (eq(issue, "Sub-task")) return "Task";
-            return "Task";
+            return IssueType[issue.ToString()];
         }
     }
 }
