@@ -27,7 +27,7 @@ namespace WorkitemImporter
             VstsConfig = vstsConfig;
         }
 
-        public void Process(IEnumerable<string> jiraQueries)
+        public void Process(IEnumerable<string> jiraQueries, bool previewMode = false)
         {
             int numberOfChunks(int total, int size)
             {
@@ -46,9 +46,9 @@ namespace WorkitemImporter
                 var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
-                    SyncToVsts(issues);
+                    SyncToVsts(issues, previewMode);
                     issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
-                    Console.WriteLine($"Fetching chunk {index * take}, retrieving {issues.Count()} items");
+                    Console.WriteLine($"  Fetching chunk {index * take}, retrieving {issues.Count()} items");
                 }
             }
 
@@ -72,7 +72,7 @@ namespace WorkitemImporter
             //}
         }
 
-        void SyncToVsts(IEnumerable<Issue> issues)
+        void SyncToVsts(IEnumerable<Issue> issues, bool previewMode = false)
         {
             if (!issues.AsEmptyIfNull().Any()) return;
 
@@ -126,7 +126,8 @@ namespace WorkitemImporter
                 //if (jiraUser != null)
                 //{
                 //AddField(doc, "System.CreatedBy", jiraUser.Email);
-                AddField(doc, "System.CreatedBy", issue.Reporter);
+                AddField(doc, "System.CreatedBy", issue.Reporter.AsJiraUserToVsts());
+                AddField(doc, "System.AssignedTo", issue.Assignee.AsJiraUserToVsts());
                 //}
 
                 string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
@@ -170,11 +171,16 @@ namespace WorkitemImporter
                     }
                 }
 
-                // Create/Update the workitem in VSTS
-                var issueType = issue.Type.ToVsts();
-                var workItem = existingWorkItemId.exists
-                    ? witClient.UpdateWorkItemAsync(doc, existingWorkItemId.id.Value).Result
-                    : witClient.CreateWorkItemAsync(doc, VstsConfig.Project, issueType, bypassRules: true).Result;
+                //Console.WriteLine($"Syncing, {issue.Key}, reporter, {issue.Reporter}");
+
+                if (!previewMode)
+                {
+                    // Create/Update the workitem in VSTS
+                    var issueType = issue.Type.ToVsts();
+                    var workItem = existingWorkItemId.exists
+                        ? witClient.UpdateWorkItemAsync(doc, existingWorkItemId.id.Value).Result
+                        : witClient.CreateWorkItemAsync(doc, VstsConfig.Project, issueType, bypassRules: true).Result;
+                }
             }
         }
     }
@@ -184,31 +190,62 @@ namespace WorkitemImporter
         static Dictionary<string, string> Priority;
         static Dictionary<string, string> Status;
         static Dictionary<string, string> IssueType;
+        static Dictionary<string, string> Users;
 
         static JiraEx()
         {
             Priority = ConfigurationManager.AppSettings[Const.JiraMapPriority].ToDictionary();
             Status = ConfigurationManager.AppSettings[Const.JiraMapStatus].ToDictionary();
             IssueType = ConfigurationManager.AppSettings[Const.JiraMapType].ToDictionary();
+            Users = ConfigurationManager.AppSettings[Const.JiraMapUsers].ToDictionary();
         }
 
         /// <summary>
         /// VSTS: New, Active, Closed, Removed, Resolved.
         /// JIRA: To Do, In Progress, Dev Complete, In Testing, Done.
         /// </summary>
-        public static string ToVsts(this IssueStatus issue)
+        public static string ToVsts(this IssueStatus issueStatus)
         {
-            return Status[issue.ToString()];
+            if (issueStatus == null) return String.Empty;
+            if (!Status.ContainsKey(issueStatus.ToString()))
+            {
+                Console.WriteLine($"Cannot map {nameof(issueStatus)} {issueStatus.ToString()}");
+                return issueStatus.ToString();
+            }
+            return Status[issueStatus.ToString()];
         }
 
-        public static string ToVsts(this IssuePriority issue)
+        public static string ToVsts(this IssuePriority issuePriority)
         {
-            return Priority[issue.ToString()];
+            if (issuePriority == null) return String.Empty;
+            if (!Priority.ContainsKey(issuePriority.ToString()))
+            {
+                Console.WriteLine($"Cannot map {nameof(issuePriority)} {issuePriority.ToString()}");
+                return issuePriority.ToString();
+            }
+            return Priority[issuePriority.ToString()];
         }
 
-        public static string ToVsts(this IssueType issue)
+        public static string ToVsts(this IssueType issueType)
         {
-            return IssueType[issue.ToString()];
+            if (issueType == null) return String.Empty;
+            if (!IssueType.ContainsKey(issueType.ToString()))
+            {
+                Console.WriteLine($"Cannot map {nameof(issueType)} {issueType.ToString()}");
+                return issueType.ToString();
+            }
+            return IssueType[issueType.ToString()];
+        }
+
+        public static string AsJiraUserToVsts(this string user)
+        {
+            if (user.IsNullOrEmpty()) return string.Empty;
+            if (!Users.ContainsKey(user))
+            {
+                Console.WriteLine($"Cannot map {nameof(user)} {user}");
+                return user;
+            }
+            return Users[user];
         }
     }
 }

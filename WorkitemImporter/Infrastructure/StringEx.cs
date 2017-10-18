@@ -51,7 +51,7 @@ namespace WorkitemImporter.Infrastructure
         {
             var result = value.GetParts(splitRows).Trim()
                 .Select(part => part.GetParts(splitPairs).ToArray())
-                .ToDictionary(split => split[0].Trim(), split => split[1].Trim());
+                .ToDictionary(split => split[0].Trim(), split => split[1].Trim(), StringComparer.OrdinalIgnoreCase);
             return result;
         }
 }

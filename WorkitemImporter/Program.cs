@@ -2,10 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
-using System.Linq;
 using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
 using WorkitemImporter.Infrastructure;
 
 namespace WorkitemImporter
@@ -16,6 +13,7 @@ namespace WorkitemImporter
         public const string JiraMapPriority = "Jira.Map.Priority";
         public const string JiraMapStatus = "Jira.Map.Status";
         public const string JiraMapType = "Jira.Map.Type";
+        public const string JiraMapUsers = "Jira.Map.Users";
     }
 
     class Program
@@ -23,6 +21,7 @@ namespace WorkitemImporter
         static void Main(string[] args)
         {
             bool showHelp = false;
+            bool previewMode = false;
             var vstsConfig = new VstsConfig();
             var jiraConfig = new JiraConfig();
 
@@ -34,6 +33,7 @@ namespace WorkitemImporter
                 { "jira-user=",  "Jira User ID", v => jiraConfig.UserId = v },
                 { "jira-password=", "Jira password", v => jiraConfig.Password = v},
                 { "jira-project=", "Jira project", v => jiraConfig.Project = v},
+                { "p|preview=", "Preview mode", v => previewMode = v != null },
                 { "h|help",  "show this message and exit", v => showHelp = v != null },
             };
 
@@ -60,7 +60,7 @@ namespace WorkitemImporter
                 .GetParts(Environment.NewLine).Trim();
 
             var sync = new Sync(vstsConfig, jiraConfig);
-            sync.Process(queries);
+            sync.Process(queries, previewMode);
         }
 
         static void ShowHelp(OptionSet p)
