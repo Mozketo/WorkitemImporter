@@ -29,6 +29,16 @@ namespace WorkitemImporter
 
         public void Process(IEnumerable<string> jiraQueries, bool previewMode = false)
         {
+            const int take = 25;
+
+            IPagedQueryResult<Issue> fetch(Jira jira, string jql, int index, int size)
+            {
+                int startAt = index * size;
+                var issues = jira.Issues.GetIssuesFromJqlAsync(jql, startAt: startAt, maxIssues: size).Result;
+                Console.WriteLine($" Fetching next chunk of {startAt}, retrieving {issues.Count()} items.");
+                return issues;
+            }
+
             int numberOfChunks(int total, int size)
             {
                 if (size == 0) return 0;
@@ -36,47 +46,48 @@ namespace WorkitemImporter
                 return (int)Math.Max(result, 1);
             }
 
-            const int take = 25;
+            var vssConnection = new VssConnection(new Uri(VstsConfig.Url), new VssBasicCredential(string.Empty, VstsConfig.PersonalAccessToken));
             var jiraConn = Jira.CreateRestClient(JiraConfig.Url, JiraConfig.UserId, JiraConfig.Password);
 
             foreach (var jql in jiraQueries)
             {
-                var issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: 0, maxIssues: take).Result;
-                Console.WriteLine($"Fetching {issues.TotalItems} from Jira '{jql}'");
+                Console.WriteLine($"Processing '{jql}'");
+                var issues = fetch(jiraConn, jql, 0, take);
                 var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
-                    SyncToVsts(issues, previewMode);
-                    issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
-                    Console.WriteLine($"  Fetching next chunk of {index * take}, retrieving {issues.Count()} items.");
+                    SyncToVsts(vssConnection, issues, previewMode);
+                    issues = fetch(jiraConn, jql, index, take);
                 }
             }
         }
 
-        void SyncToVsts(IEnumerable<Issue> issues, bool previewMode = false)
+        /// <summary>
+        /// Identify the unique sprints in the issues and create in VSTS
+        /// </summary>
+        void SyncSprintsForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
         {
-            if (!issues.AsEmptyIfNull().Any()) return;
-
-            var connection = new VssConnection(new Uri(VstsConfig.Url), new VssBasicCredential(string.Empty, VstsConfig.PersonalAccessToken));
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
-            //var x = witClient.GetWorkItemAsync(49).Result;
-
-            // Get the existing iterations defined in VSTS
-            IEnumerable<WorkItemClassificationNode> GetIterations()
-            {
-                var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result;
-                return iterations.Children;
-            }
-
             var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null).Distinct().ToList();
             foreach (var sprint in sprints)
             {
                 var sprintName = sprint.Replace("/", "");
-                if (!GetIterations().Any(i => i.Name.Equals(sprintName, StringComparison.OrdinalIgnoreCase)))
+                var iterations = witClient.GetClassificationNodeAsync(project, TreeStructureGroup.Iterations, null, 10).Result.Children;
+                if (!iterations.Any(i => i.Name.Equals(sprintName, StringComparison.OrdinalIgnoreCase)))
                 {
                     // Add any missing VSTS iterations to map the Jira tickets to 
                     var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprintName, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
                 }
+            }
+        }
+
+        void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, bool previewMode)
+        {
+            if (!issues.AsEmptyIfNull().Any()) return;
+
+            if (!previewMode)
+            {
+                SyncSprintsForIssues(connection, issues, VstsConfig.Project);
             }
 
             void AddField(JsonPatchDocument doc, string path, object value)
@@ -98,6 +109,7 @@ namespace WorkitemImporter
                 });
             }
 
+            var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
             foreach (var issue in issues)
             {
                 var existingWorkItemId = witClient.GetWorkItemIdByTitleAsync(VstsConfig.Project, $"{issue.Key.ToString()}");
@@ -139,11 +151,10 @@ namespace WorkitemImporter
                 string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
                 if (!string.IsNullOrEmpty(issueSprint))
                 {
-                    var iteration = GetIterations().FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
+                    var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result.Children;
+                    var iteration = iterations.FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
                     AddField(doc, "System.IterationID", iteration?.Id);
                 }
-
-                //Console.WriteLine($"Syncing, {issue.Key}, reporter, {issue.Reporter}");
 
                 if (!previewMode)
                 {
