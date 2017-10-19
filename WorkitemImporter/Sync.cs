@@ -48,7 +48,7 @@ namespace WorkitemImporter
                 {
                     SyncToVsts(issues, previewMode);
                     issues = jiraConn.Issues.GetIssuesFromJqlAsync(jql, startAt: index * take, maxIssues: take).Result;
-                    Console.WriteLine($"  Fetching chunk {index * take}, retrieving {issues.Count()} items");
+                    Console.WriteLine($"  Fetching next chunk of {index * take}, retrieving {issues.Count()} items.");
                 }
             }
         }
@@ -79,14 +79,6 @@ namespace WorkitemImporter
                 }
             }
 
-            // Find a WorkItem by title and return, if none found then null
-            (bool exists, int? id) WorkItemExists(string jiraKey)
-            {
-                var query = new Wiql { Query = $"Select [System.Id] from WorkItems Where [System.TeamProject] = '{VstsConfig.Project}' AND [System.Title] CONTAINS '[{jiraKey}]'" };
-                var qResult = witClient.QueryByWiqlAsync(query).Result;
-                return (qResult.WorkItems.AsEmptyIfNull().Any(), qResult.WorkItems.AsEmptyIfNull().FirstOrDefault()?.Id);
-            }
-
             void AddField(JsonPatchDocument doc, string path, object value)
             {
                 if (value is null) return;
@@ -94,62 +86,61 @@ namespace WorkitemImporter
                 doc.Add(new JsonPatchOperation { Operation = Operation.Add, Path = $"/fields/{path}", Value = value });
             }
 
+            void AddRelationship(JsonPatchDocument doc, string rel, WorkItem parent)
+            {
+                if (rel.IsNullOrEmpty()) return;
+                if (parent == null) return;
+                doc.Add(new JsonPatchOperation()
+                {
+                    Operation = Operation.Add,
+                    Path = "/relations/-",
+                    Value = new { rel, url = parent.Url, attributes = new { comment = "Link supplied via Jira import" } }
+                });
+            }
+
             foreach (var issue in issues)
             {
-                var existingWorkItemId = WorkItemExists(issue.Key.ToString());
+                var existingWorkItemId = witClient.GetWorkItemIdByTitleAsync(VstsConfig.Project, $"{issue.Key.ToString()}");
+                bool isNew = !existingWorkItemId.HasValue;
 
                 var doc = new JsonPatchDocument();
 
-                AddField(doc, "System.Title", $"[{issue.Key.ToString()}] {issue.Summary}");
+                AddField(doc, "System.Title", $"{issue.Key.ToString()} {issue.Summary}");
                 AddField(doc, "System.Description", issue.Description);
-
-                //var jiraUser = jiraConn.Users.SearchUsersAsync(issue.Reporter).Result.FirstOrDefault();
-                //if (jiraUser != null)
-                //{
-                //AddField(doc, "System.CreatedBy", jiraUser.Email);
                 AddField(doc, "System.CreatedBy", issue.Reporter.AsJiraUserToVsts());
                 AddField(doc, "System.AssignedTo", issue.Assignee.AsJiraUserToVsts());
-                //}
-
-                string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
-                if (!string.IsNullOrEmpty(issueSprint))
-                {
-                    var iteration = GetIterations().FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
-                    //AddProp(doc, "/Fields/System.IterationPath", iteration?.Name);
-                    AddField(doc, "System.IterationID", iteration?.Id);
-                }
-
                 AddField(doc, "Microsoft.VSTS.Scheduling.StoryPoints", issue.CustomFields["Story Points"]?.Values.FirstOrDefault());
                 AddField(doc, "System.State", issue.Status.ToVsts());
                 AddField(doc, "Microsoft.VSTS.Common.Priority", issue.Priority.ToVsts());
                 AddField(doc, "System.Tags", string.Join(";", issue.Labels));
 
-                if (!existingWorkItemId.exists)
+                if (isNew)
                 {
                     AddField(doc, "System.CreatedDate", issue.Created);
                     AddField(doc, "System.ChangedDate", issue.Updated);
                     AddField(doc, "System.History", $"Import from Jira {DateTime.Now} (NZ). Original Jira ID: {issue.Key}");
+
+                    // Link epics up
+                    var epicLinkName = issue.CustomFields["Epic Link"]?.Values.FirstOrDefault();
+                    if (!epicLinkName.IsNullOrEmpty())
+                    {
+                        var parent = witClient.GetWorkItemByTitleAsync(VstsConfig.Project, epicLinkName);
+                        AddRelationship(doc, "System.LinkTypes.Hierarchy-Reverse", parent); // Set Epic as parent-child relationship
+                    }
+
+                    // Link to parents (Jira sub-tasks)
+                    if (!issue.ParentIssueKey.IsNullOrEmpty())
+                    {
+                        var parent = witClient.GetWorkItemByTitleAsync(VstsConfig.Project, issue.ParentIssueKey);
+                        AddRelationship(doc, "System.LinkTypes.Hierarchy-Reverse", parent); // Set Epic as parent-child relationship
+                    }
                 }
 
-                var epicLink = issue.CustomFields["Epic Link"]?.Values.FirstOrDefault();
-                if (!string.IsNullOrEmpty(epicLink))
+                string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
+                if (!string.IsNullOrEmpty(issueSprint))
                 {
-                    var epic = WorkItemExists(epicLink);
-                    if (epic.exists)
-                    {
-                        var targetWorkItem = witClient.GetWorkItemAsync(epic.id.Value).Result;
-                        doc.Add(new JsonPatchOperation()
-                        {
-                            Operation = Operation.Add,
-                            Path = "/relations/-",
-                            Value = new
-                            {
-                                rel = "System.LinkTypes.Hierarchy-Reverse",
-                                url = targetWorkItem.Url,
-                                attributes = new { comment = "Link supplied via Jira import" }
-                            }
-                        });
-                    }
+                    var iteration = GetIterations().FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
+                    AddField(doc, "System.IterationID", iteration?.Id);
                 }
 
                 //Console.WriteLine($"Syncing, {issue.Key}, reporter, {issue.Reporter}");
@@ -158,9 +149,9 @@ namespace WorkitemImporter
                 {
                     // Create/Update the workitem in VSTS
                     var issueType = issue.Type.ToVsts();
-                    var workItem = existingWorkItemId.exists
-                        ? witClient.UpdateWorkItemAsync(doc, existingWorkItemId.id.Value).Result
-                        : witClient.CreateWorkItemAsync(doc, VstsConfig.Project, issueType, bypassRules: true).Result;
+                    var workItem = isNew
+                        ? witClient.CreateWorkItemAsync(doc, VstsConfig.Project, issueType, bypassRules: true).Result
+                        : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value).Result;
                 }
             }
         }
