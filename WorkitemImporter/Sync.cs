@@ -18,7 +18,7 @@ namespace WorkitemImporter
 {
     sealed class Sync
     {
-        static HashSet<string> Processed => new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        static HashSet<string> Processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         static Action<string, Action> InvokeIfNotProcessed = new Action<string, Action>((string key, Action a) =>
         {
@@ -65,6 +65,7 @@ namespace WorkitemImporter
                 var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
+                    SyncEpicForIssues(vssConnection, jiraConn, issues, previewMode);
                     SyncToVsts(vssConnection, issues, previewMode);
                     issues = fetch(jiraConn, jql, index, take);
                 }
@@ -96,9 +97,18 @@ namespace WorkitemImporter
         /// <summary>
         /// For the issues provided ensure that the Epics are created in VSTS before processing. Ignores Epics already sync'd.
         /// </summary>
-        void SyncEpicForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
+        void SyncEpicForIssues(VssConnection connection, Jira jira, IEnumerable<Issue> issues, bool previewMode)
         {
-            throw new NotImplementedException();
+            var epics = issues.Select(i => i.CustomFields["Epic Link"]?.Values.FirstOrDefault())
+                .EmptyIfNull().Trim().Distinct().ToList();
+            foreach (var epic in epics)
+            {
+                InvokeIfNotProcessed(epic, () =>
+                {
+                    var issue = jira.Issues.GetIssueAsync(epic).Result;
+                    SyncToVsts(connection, new[] { issue }, previewMode);
+                });
+            }
         }
 
         void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, bool previewMode)

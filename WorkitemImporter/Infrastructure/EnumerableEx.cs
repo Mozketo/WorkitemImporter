@@ -8,7 +8,9 @@ namespace WorkitemImporter.Infrastructure
 {
     public static class EnumerableEx
     {
-        public static IEnumerable<string> Trim(this IEnumerable<string> items) => items.Select(i => i.Trim()).RemoveEmpty();
+        public static IEnumerable<string> EmptyIfNull(this IEnumerable<string> items) => items == null ? Enumerable.Empty<string>() : items;
+
+        public static IEnumerable<string> Trim(this IEnumerable<string> items) => items.Select(i => i?.Trim()).RemoveEmpty();
 
         // Remove any string that starts with //
         public static IEnumerable<string> RemoveComments(this IEnumerable<string> items) => items.Where(i => !i.StartsWith("//", StringComparison.OrdinalIgnoreCase));
