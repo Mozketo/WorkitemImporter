@@ -18,6 +18,15 @@ namespace WorkitemImporter
 {
     sealed class Sync
     {
+        static HashSet<string> Processed => new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static Action<string, Action> InvokeIfNotProcessed = new Action<string, Action>((string key, Action a) =>
+        {
+            if (Processed.Contains(key)) return;
+            a();
+            Processed.Add(key);
+        });
+
         public VstsConfig VstsConfig { get; }
         public JiraConfig JiraConfig { get; }
 
@@ -63,22 +72,33 @@ namespace WorkitemImporter
         }
 
         /// <summary>
-        /// Identify the unique sprints in the issues and create in VSTS
+        /// Identify the unique sprints in the issues and create in VSTS. If a sprint has already been processed it will be skipped.
         /// </summary>
         void SyncSprintsForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
         {
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
-            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null).Distinct().ToList();
+            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null)
+                .Distinct().Select(i => i.Replace("/", string.Empty));
             foreach (var sprint in sprints)
             {
-                var sprintName = sprint.Replace("/", "");
-                var iterations = witClient.GetClassificationNodeAsync(project, TreeStructureGroup.Iterations, null, 10).Result.Children;
-                if (!iterations.Any(i => i.Name.Equals(sprintName, StringComparison.OrdinalIgnoreCase)))
+                InvokeIfNotProcessed(sprint, () =>
                 {
-                    // Add any missing VSTS iterations to map the Jira tickets to 
-                    var workItemClassificationNode = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprintName, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
-                }
+                    var iterations = witClient.GetClassificationNodeAsync(project, TreeStructureGroup.Iterations, null, 10).Result.Children;
+                    if (!iterations.Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        // Add any missing VSTS iterations to map the Jira tickets to 
+                        var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
+                    }
+                });
             }
+        }
+
+        /// <summary>
+        /// For the issues provided ensure that the Epics are created in VSTS before processing. Ignores Epics already sync'd.
+        /// </summary>
+        void SyncEpicForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
+        {
+            throw new NotImplementedException();
         }
 
         void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, bool previewMode)
