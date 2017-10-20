@@ -61,7 +61,7 @@ namespace WorkitemImporter
                 .GetParts(Environment.NewLine)
                 .Trim().RemoveComments();
 
-            if (queries == null || !queries.Any())
+            if (!queries.EmptyIfNull().Any())
             {
                 Console.WriteLine($"Add a Jira query in appSettings to sync. Example: project = 'projectname' and status not in (done) and type = epic and sprint is empty");
                 return;
