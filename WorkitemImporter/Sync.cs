@@ -213,52 +213,39 @@ namespace WorkitemImporter
             Users = ConfigurationManager.AppSettings[Const.JiraMapUsers].ToDictionary();
         }
 
+        static string Map(this IDictionary<string, string> items, string value)
+        {
+            if (value == null) return String.Empty;
+            if (!items.ContainsKey(value))
+            {
+                Console.WriteLine($"Cannot map {value}");
+                return value;
+            }
+            return items[value];
+        }
+
         /// <summary>
         /// VSTS: New, Active, Closed, Removed, Resolved.
         /// JIRA: To Do, In Progress, Dev Complete, In Testing, Done.
         /// </summary>
         public static string ToVsts(this IssueStatus issueStatus)
         {
-            if (issueStatus == null) return String.Empty;
-            if (!Status.ContainsKey(issueStatus.ToString()))
-            {
-                Console.WriteLine($"Cannot map {nameof(issueStatus)} {issueStatus.ToString()}");
-                return issueStatus.ToString();
-            }
-            return Status[issueStatus.ToString()];
+            return Status.Map(issueStatus.ToString());
         }
 
         public static string ToVsts(this IssuePriority issuePriority)
         {
-            if (issuePriority == null) return String.Empty;
-            if (!Priority.ContainsKey(issuePriority.ToString()))
-            {
-                Console.WriteLine($"Cannot map {nameof(issuePriority)} {issuePriority.ToString()}");
-                return issuePriority.ToString();
-            }
-            return Priority[issuePriority.ToString()];
+            return Priority.Map(issuePriority.ToString());
         }
 
         public static string ToVsts(this IssueType issueType)
         {
-            if (issueType == null) return String.Empty;
-            if (!IssueType.ContainsKey(issueType.ToString()))
-            {
-                Console.WriteLine($"Cannot map {nameof(issueType)} {issueType.ToString()}");
-                return issueType.ToString();
-            }
-            return IssueType[issueType.ToString()];
+            return IssueType.Map(issueType.ToString());
         }
 
         public static string AsJiraUserToVsts(this string user)
         {
-            if (user.IsNullOrEmpty()) return string.Empty;
-            if (!Users.ContainsKey(user))
-            {
-                Console.WriteLine($"Cannot map {nameof(user)} {user}");
-                return user;
-            }
-            return Users[user];
+            return Users.Map(user);
         }
     }
 }
