@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-This is a simple project to help migrate Jira tickets to VSTS as workitems.
+This is a simple project to help migrate Jira tickets to VSTS as workitems. Provide a list of JQL to be sync'd to VSTS, it will automatically find the Sprints and Epics associated with the issues and sync these too. _Note: Sub-tasks should be sync'd after the other issue-types are processed._
 
 ## Required
 
