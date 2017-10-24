@@ -47,7 +47,7 @@ namespace WorkitemImporter
             int numberOfChunks(int total, int size)
             {
                 if (size == 0) return 0;
-                var result = Math.Floor(((decimal)total / size));
+                var result = Math.Ceiling(((decimal)total / size));
                 return (int)Math.Max(result, 1);
             }
 
