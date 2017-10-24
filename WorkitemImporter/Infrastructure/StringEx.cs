@@ -54,5 +54,14 @@ namespace WorkitemImporter.Infrastructure
                 .ToDictionary(split => split[0].Trim(), split => split[1].Trim(), StringComparer.OrdinalIgnoreCase);
             return result;
         }
-}
+
+        static readonly string[] Truths = new[] { "t", "y", "yes", "yup" };
+        public static bool AsBoolean(this string s)
+        {
+            if (s.IsNullOrEmpty()) return false;
+            if (Truths.Any(t => s.Equals(t, StringComparison.OrdinalIgnoreCase))) return true;
+            Boolean.TryParse(s, out bool result);
+            return result;
+        }
+    }
 }

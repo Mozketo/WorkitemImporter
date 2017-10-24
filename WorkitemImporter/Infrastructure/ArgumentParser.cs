@@ -38,7 +38,7 @@ namespace WorkitemImporter.Infrastructure
                 { "jira-user=",  "Jira User ID", v => Jira.UserId = v },
                 { "jira-password=", "Jira password", v => Jira.Password = v},
                 { "jira-project=", "Jira project", v => Jira.Project = v},
-                { "r|readonly=", "Read-only mode", v => Mode = v != null ? ProcessingMode.ReadOnly : ProcessingMode.ReadWrite },
+                { "r|readonly=", "Read-only mode", v => Mode = v.AsBoolean() ? ProcessingMode.ReadOnly : ProcessingMode.ReadWrite },
                 { "h|help",  "show this message and exit", v => showHelp = v != null },
             };
 

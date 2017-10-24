@@ -25,8 +25,14 @@ namespace WorkitemImporter
 
         public VstsConfig Vsts { get; } = Configuration.Instance.Vsts;
         public JiraConfig Jira { get; } = Configuration.Instance.Jira;
+        public ProcessingMode Mode { get; }
 
-        public void Process(IEnumerable<string> jiraQueries, ProcessingMode mode)
+        public Sync(ProcessingMode mode)
+        {
+            Mode = mode;
+        }
+
+        public void Process(IEnumerable<string> jiraQueries)
         {
             const int take = 25;
 
@@ -55,8 +61,8 @@ namespace WorkitemImporter
                 var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
-                    SyncEpicForIssues(vssConnection, jiraConn, issues, mode);
-                    SyncToVsts(vssConnection, issues, mode);
+                    SyncEpicForIssues(vssConnection, jiraConn, issues);
+                    SyncToVsts(vssConnection, issues);
                     issues = fetch(jiraConn, jql, index, take);
                 }
             }
@@ -72,13 +78,16 @@ namespace WorkitemImporter
                 .Distinct().Select(i => i.Replace("/", string.Empty));
             foreach (var sprint in sprints)
             {
-                InvokeIfNotProcessed(sprint, () =>
+                InvokeIfNotProcessed($"sprint-{sprint}", () =>
                 {
                     var iterations = witClient.GetClassificationNodeAsync(project, TreeStructureGroup.Iterations, null, 10).Result.Children;
                     if (!iterations.Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
                     {
                         // Add any missing VSTS iterations to map the Jira tickets to 
-                        var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, Vsts.Project, TreeStructureGroup.Iterations).Result;
+                        if (Mode == ProcessingMode.ReadWrite)
+                        {
+                            var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, Vsts.Project, TreeStructureGroup.Iterations).Result;
+                        }
                     }
                 });
             }
@@ -87,7 +96,7 @@ namespace WorkitemImporter
         /// <summary>
         /// For the issues provided ensure that the Epics are created in VSTS before processing. Ignores Epics already sync'd.
         /// </summary>
-        void SyncEpicForIssues(VssConnection connection, Atlassian.Jira.Jira jira, IEnumerable<Issue> issues, ProcessingMode mode)
+        void SyncEpicForIssues(VssConnection connection, Atlassian.Jira.Jira jira, IEnumerable<Issue> issues)
         {
             var epics = issues.Select(i => i.CustomFields["Epic Link"]?.Values.FirstOrDefault())
                 .EmptyIfNull().Trim().Distinct().ToList();
@@ -96,19 +105,16 @@ namespace WorkitemImporter
                 InvokeIfNotProcessed(epic, () =>
                 {
                     var issue = jira.Issues.GetIssueAsync(epic).Result;
-                    SyncToVsts(connection, new[] { issue }, mode);
+                    SyncToVsts(connection, new[] { issue });
                 });
             }
         }
 
-        void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, ProcessingMode mode)
+        void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues)
         {
             if (!issues.AsEmptyIfNull().Any()) return;
 
-            if (mode == ProcessingMode.ReadWrite)
-            {
-                SyncSprintsForIssues(connection, issues, Vsts.Project);
-            }
+            SyncSprintsForIssues(connection, issues, Vsts.Project);
 
             void AddField(JsonPatchDocument doc, string path, object value)
             {
@@ -176,14 +182,11 @@ namespace WorkitemImporter
                     AddField(doc, "System.IterationID", iteration?.Id);
                 }
 
-                if (mode == ProcessingMode.ReadWrite)
-                {
-                    // Create/Update the workitem in VSTS
-                    var issueType = issue.Type.ToVsts();
-                    var workItem = isNew
-                        ? witClient.CreateWorkItemAsync(doc, Vsts.Project, issueType, bypassRules: true).Result
-                        : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value).Result;
-                }
+                // Create/Update the workitem in VSTS
+                var issueType = issue.Type.ToVsts();
+                var workItem = isNew
+                    ? witClient.CreateWorkItemAsync(doc, Vsts.Project, issueType, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result
+                    : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result;
             }
         }
     }

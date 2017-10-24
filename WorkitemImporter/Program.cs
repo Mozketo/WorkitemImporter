@@ -27,7 +27,7 @@ namespace WorkitemImporter
                 return;
             }
 
-            new Sync().Process(queries, config.Mode);
+            new Sync(config.Mode).Process(queries);
 
             Console.WriteLine("Sync complete");
         }
