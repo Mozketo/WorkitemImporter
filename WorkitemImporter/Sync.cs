@@ -40,15 +40,8 @@ namespace WorkitemImporter
             {
                 int startAt = index * size;
                 var issues = jira.Issues.GetIssuesFromJqlAsync(jql, startAt: startAt, maxIssues: size).Result;
-                Console.WriteLine($" Fetching next chunk of {startAt}, retrieving {issues.Count()} items.");
+                Console.WriteLine($" Fetching chunk {index + 1}, retrieving {issues.Count()} items.");
                 return issues;
-            }
-
-            int numberOfChunks(int total, int size)
-            {
-                if (size == 0) return 0;
-                var result = Math.Ceiling(((decimal)total / size));
-                return (int)Math.Max(result, 1);
             }
 
             var vssConnection = new VssConnection(new Uri(Vsts.Url), new VssBasicCredential(string.Empty, Vsts.PersonalAccessToken));
@@ -57,13 +50,13 @@ namespace WorkitemImporter
             foreach (var jql in jiraQueries)
             {
                 Console.WriteLine($"Processing '{jql}'");
-                var issues = fetch(jiraConn, jql, 0, take);
-                var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
-                foreach (var index in chunks)
+                int index = 0;
+                var issues = fetch(jiraConn, jql, index, take);
+                while (issues.Any())
                 {
                     SyncEpicForIssues(vssConnection, jiraConn, issues);
                     SyncToVsts(vssConnection, issues);
-                    issues = fetch(jiraConn, jql, index, take);
+                    issues = fetch(jiraConn, jql, ++index, take);
                 }
             }
         }
