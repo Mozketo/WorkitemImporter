@@ -74,7 +74,7 @@ namespace WorkitemImporter
         void SyncSprintsForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
         {
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
-            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.FirstOrDefault()).Where(i => i != null)
+            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.LastOrDefault()).Where(i => i != null)
                 .Distinct().Select(i => i.Replace("/", string.Empty));
             foreach (var sprint in sprints)
             {
@@ -174,8 +174,8 @@ namespace WorkitemImporter
                     }
                 }
 
-                string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
-                if (!string.IsNullOrEmpty(issueSprint))
+                string issueSprint = issue.CustomFields["Sprint"].Values.LastOrDefault();
+                if (isNew && !string.IsNullOrEmpty(issueSprint))
                 {
                     var iterations = witClient.GetClassificationNodeAsync(Vsts.Project, TreeStructureGroup.Iterations, null, 10).Result.Children;
                     var iteration = iterations.FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
