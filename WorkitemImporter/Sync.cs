@@ -5,13 +5,9 @@ using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.WebApi;
 using Microsoft.VisualStudio.Services.WebApi.Patch;
 using Microsoft.VisualStudio.Services.WebApi.Patch.Json;
-using RestSharp.Extensions.MonoHttp;
 using System;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using WorkitemImporter.Infrastructure;
 
 namespace WorkitemImporter
@@ -27,16 +23,10 @@ namespace WorkitemImporter
             Processed.Add(key);
         });
 
-        public VstsConfig VstsConfig { get; }
-        public JiraConfig JiraConfig { get; }
+        public VstsConfig Vsts { get; } = Configuration.Instance.Vsts;
+        public JiraConfig Jira { get; } = Configuration.Instance.Jira;
 
-        public Sync(VstsConfig vstsConfig, JiraConfig jiraConfig)
-        {
-            JiraConfig = jiraConfig;
-            VstsConfig = vstsConfig;
-        }
-
-        public void Process(IEnumerable<string> jiraQueries, bool previewMode = false)
+        public void Process(IEnumerable<string> jiraQueries, ProcessingMode mode)
         {
             const int take = 25;
 
@@ -55,8 +45,8 @@ namespace WorkitemImporter
                 return (int)Math.Max(result, 1);
             }
 
-            var vssConnection = new VssConnection(new Uri(VstsConfig.Url), new VssBasicCredential(string.Empty, VstsConfig.PersonalAccessToken));
-            var jiraConn = Jira.CreateRestClient(JiraConfig.Url, JiraConfig.UserId, JiraConfig.Password);
+            var vssConnection = new VssConnection(new Uri(Vsts.Url), new VssBasicCredential(string.Empty, Vsts.PersonalAccessToken));
+            var jiraConn = Atlassian.Jira.Jira.CreateRestClient((string)Jira.Url, (string)Jira.UserId, (string)Jira.Password);
 
             foreach (var jql in jiraQueries)
             {
@@ -65,8 +55,8 @@ namespace WorkitemImporter
                 var chunks = Enumerable.Range(1, numberOfChunks(issues.TotalItems, take));
                 foreach (var index in chunks)
                 {
-                    SyncEpicForIssues(vssConnection, jiraConn, issues, previewMode);
-                    SyncToVsts(vssConnection, issues, previewMode);
+                    SyncEpicForIssues(vssConnection, jiraConn, issues, mode);
+                    SyncToVsts(vssConnection, issues, mode);
                     issues = fetch(jiraConn, jql, index, take);
                 }
             }
@@ -88,7 +78,7 @@ namespace WorkitemImporter
                     if (!iterations.Any(i => i.Name.Equals(sprint, StringComparison.OrdinalIgnoreCase)))
                     {
                         // Add any missing VSTS iterations to map the Jira tickets to 
-                        var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, VstsConfig.Project, TreeStructureGroup.Iterations).Result;
+                        var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, Vsts.Project, TreeStructureGroup.Iterations).Result;
                     }
                 });
             }
@@ -97,7 +87,7 @@ namespace WorkitemImporter
         /// <summary>
         /// For the issues provided ensure that the Epics are created in VSTS before processing. Ignores Epics already sync'd.
         /// </summary>
-        void SyncEpicForIssues(VssConnection connection, Jira jira, IEnumerable<Issue> issues, bool previewMode)
+        void SyncEpicForIssues(VssConnection connection, Atlassian.Jira.Jira jira, IEnumerable<Issue> issues, ProcessingMode mode)
         {
             var epics = issues.Select(i => i.CustomFields["Epic Link"]?.Values.FirstOrDefault())
                 .EmptyIfNull().Trim().Distinct().ToList();
@@ -106,18 +96,18 @@ namespace WorkitemImporter
                 InvokeIfNotProcessed(epic, () =>
                 {
                     var issue = jira.Issues.GetIssueAsync(epic).Result;
-                    SyncToVsts(connection, new[] { issue }, previewMode);
+                    SyncToVsts(connection, new[] { issue }, mode);
                 });
             }
         }
 
-        void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, bool previewMode)
+        void SyncToVsts(VssConnection connection, IEnumerable<Issue> issues, ProcessingMode mode)
         {
             if (!issues.AsEmptyIfNull().Any()) return;
 
-            if (!previewMode)
+            if (mode == ProcessingMode.ReadWrite)
             {
-                SyncSprintsForIssues(connection, issues, VstsConfig.Project);
+                SyncSprintsForIssues(connection, issues, Vsts.Project);
             }
 
             void AddField(JsonPatchDocument doc, string path, object value)
@@ -142,7 +132,7 @@ namespace WorkitemImporter
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
             foreach (var issue in issues)
             {
-                var existingWorkItemId = witClient.GetWorkItemIdByTitleAsync(VstsConfig.Project, $"{issue.Key.ToString()}");
+                var existingWorkItemId = witClient.GetWorkItemIdByTitleAsync(Vsts.Project, $"{issue.Key.ToString()}");
                 bool isNew = !existingWorkItemId.HasValue;
 
                 var doc = new JsonPatchDocument();
@@ -166,14 +156,14 @@ namespace WorkitemImporter
                     var epicLinkName = issue.CustomFields["Epic Link"]?.Values.FirstOrDefault();
                     if (!epicLinkName.IsNullOrEmpty())
                     {
-                        var parent = witClient.GetWorkItemByTitleAsync(VstsConfig.Project, epicLinkName);
+                        var parent = witClient.GetWorkItemByTitleAsync(Vsts.Project, epicLinkName);
                         AddRelationship(doc, "System.LinkTypes.Hierarchy-Reverse", parent); // Set Epic as parent-child relationship
                     }
 
                     // Link to parents (Jira sub-tasks)
                     if (!issue.ParentIssueKey.IsNullOrEmpty())
                     {
-                        var parent = witClient.GetWorkItemByTitleAsync(VstsConfig.Project, issue.ParentIssueKey);
+                        var parent = witClient.GetWorkItemByTitleAsync(Vsts.Project, issue.ParentIssueKey);
                         AddRelationship(doc, "System.LinkTypes.Hierarchy-Reverse", parent); // Set Epic as parent-child relationship
                     }
                 }
@@ -181,71 +171,20 @@ namespace WorkitemImporter
                 string issueSprint = issue.CustomFields["Sprint"].Values.FirstOrDefault();
                 if (!string.IsNullOrEmpty(issueSprint))
                 {
-                    var iterations = witClient.GetClassificationNodeAsync(VstsConfig.Project, TreeStructureGroup.Iterations, null, 10).Result.Children;
+                    var iterations = witClient.GetClassificationNodeAsync(Vsts.Project, TreeStructureGroup.Iterations, null, 10).Result.Children;
                     var iteration = iterations.FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
                     AddField(doc, "System.IterationID", iteration?.Id);
                 }
 
-                if (!previewMode)
+                if (mode == ProcessingMode.ReadWrite)
                 {
                     // Create/Update the workitem in VSTS
                     var issueType = issue.Type.ToVsts();
                     var workItem = isNew
-                        ? witClient.CreateWorkItemAsync(doc, VstsConfig.Project, issueType, bypassRules: true).Result
+                        ? witClient.CreateWorkItemAsync(doc, Vsts.Project, issueType, bypassRules: true).Result
                         : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value).Result;
                 }
             }
-        }
-    }
-
-    public static class JiraEx
-    {
-        static Dictionary<string, string> Priority;
-        static Dictionary<string, string> Status;
-        static Dictionary<string, string> IssueType;
-        static Dictionary<string, string> Users;
-
-        static JiraEx()
-        {
-            Priority = ConfigurationManager.AppSettings[Const.JiraMapPriority].ToDictionary();
-            Status = ConfigurationManager.AppSettings[Const.JiraMapStatus].ToDictionary();
-            IssueType = ConfigurationManager.AppSettings[Const.JiraMapType].ToDictionary();
-            Users = ConfigurationManager.AppSettings[Const.JiraMapUsers].ToDictionary();
-        }
-
-        static string Map(this IDictionary<string, string> items, string value)
-        {
-            if (value == null) return String.Empty;
-            if (!items.ContainsKey(value))
-            {
-                Console.WriteLine($"Cannot map {value}");
-                return value;
-            }
-            return items[value];
-        }
-
-        /// <summary>
-        /// VSTS: New, Active, Closed, Removed, Resolved.
-        /// JIRA: To Do, In Progress, Dev Complete, In Testing, Done.
-        /// </summary>
-        public static string ToVsts(this IssueStatus issueStatus)
-        {
-            return Status.Map(issueStatus.ToString());
-        }
-
-        public static string ToVsts(this IssuePriority issuePriority)
-        {
-            return Priority.Map(issuePriority.ToString());
-        }
-
-        public static string ToVsts(this IssueType issueType)
-        {
-            return IssueType.Map(issueType.ToString());
-        }
-
-        public static string AsJiraUserToVsts(this string user)
-        {
-            return Users.Map(user);
         }
     }
 }

@@ -104,8 +104,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Const.cs" />
+    <Compile Include="Infrastructure\ArgumentParser.cs" />
     <Compile Include="Infrastructure\EnumerableEx.cs" />
+    <Compile Include="Infrastructure\JiraConfig.cs" />
+    <Compile Include="Infrastructure\JiraEx.cs" />
     <Compile Include="Infrastructure\StringEx.cs" />
+    <Compile Include="Infrastructure\VstsConfig.cs" />
     <Compile Include="Infrastructure\WitEx.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
