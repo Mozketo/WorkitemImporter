@@ -49,7 +49,7 @@ namespace WorkitemImporter.Infrastructure
 
         public static Dictionary<string, string> ToDictionary(this string value, string splitRows = "\n", string splitPairs = ",")
         {
-            var result = value.GetParts(splitRows).Trim()
+            var result = value.GetParts(splitRows).Trim().RemoveComments()
                 .Select(part => part.GetParts(splitPairs).ToArray())
                 .ToDictionary(split => split[0].Trim(), split => split[1].Trim(), StringComparer.OrdinalIgnoreCase);
             return result;
