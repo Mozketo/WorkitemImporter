@@ -2,6 +2,7 @@
 {
     public static class Const
     {
+        public const string JiraProject = "Jira.Project";
         public const string JiraQueries = "Jira.Queries";
         public const string JiraMapPriority = "Jira.Map.Priority";
         public const string JiraMapStatus = "Jira.Map.Status";

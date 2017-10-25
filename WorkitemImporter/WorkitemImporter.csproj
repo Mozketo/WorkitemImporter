@@ -112,6 +112,9 @@
     <Compile Include="Infrastructure\StringEx.cs" />
     <Compile Include="Infrastructure\VstsConfig.cs" />
     <Compile Include="Infrastructure\WitEx.cs" />
+    <Compile Include="JiraAgile\JiraBoard.cs" />
+    <Compile Include="JiraAgile\JiraPage.cs" />
+    <Compile Include="JiraAgile\JiraSprint.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Sync.cs" />

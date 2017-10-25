@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Configuration;
+using WorkitemImporter.JiraAgile;
 
 namespace WorkitemImporter.Infrastructure
 {
@@ -53,6 +54,41 @@ namespace WorkitemImporter.Infrastructure
         public static string AsJiraUserToVsts(this string user)
         {
             return Users.Map(user);
+        }
+    }
+
+    public static class JiraEx2
+    {
+        /// <summary>
+        /// Return all boards for a project. Note: doesn't yet support paging
+        /// https://docs.atlassian.com/jira-software/REST/cloud/#agile/1.0/board-getAllBoards
+        /// </summary>
+        public static IEnumerable<JiraBoard> Boards(this Jira jiraConn, string project)
+        {
+            var restClient = jiraConn.RestClient.RestSharpClient;
+            var request = new RestSharp.RestRequest(RestSharp.Method.GET)
+            {
+                Resource = "/rest/agile/1.0/board"
+            };
+            request.AddParameter("projectKeyOrId", project);
+            var response = restClient.Execute<JiraPage<JiraBoard>>(request);
+            return response.Data.Values;
+        }
+
+        /// <summary>
+        /// Return all sprints for a project. Note: doesn't yet support paging.
+        /// https://docs.atlassian.com/jira-software/REST/cloud/#agile/1.0/board/{boardId}/sprint-getAllSprints
+        /// </summary>
+        public static IEnumerable<JiraSprint> Sprints(this Jira jiraConn, int boardId, string sprintState = "active")
+        {
+            var restClient = jiraConn.RestClient.RestSharpClient;
+            var request = new RestSharp.RestRequest(RestSharp.Method.GET)
+            {
+                Resource = $"/rest/agile/1.0/board/{boardId}/sprint"
+            };
+            request.AddParameter("state", sprintState);
+            var response = restClient.Execute<JiraPage<JiraSprint>>(request);
+            return response.Data.Values;
         }
     }
 }

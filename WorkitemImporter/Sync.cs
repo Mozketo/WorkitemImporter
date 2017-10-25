@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using WorkitemImporter.Infrastructure;
+using WorkitemImporter.JiraAgile;
 
 namespace WorkitemImporter
 {
@@ -26,6 +27,7 @@ namespace WorkitemImporter
         public VstsConfig Vsts { get; } = Configuration.Instance.Vsts;
         public JiraConfig Jira { get; } = Configuration.Instance.Jira;
         public ProcessingMode Mode { get; }
+        public IEnumerable<JiraSprint> ActiveSprints { get; private set; }
 
         public Sync(ProcessingMode mode)
         {
@@ -47,6 +49,14 @@ namespace WorkitemImporter
             var vssConnection = new VssConnection(new Uri(Vsts.Url), new VssBasicCredential(string.Empty, Vsts.PersonalAccessToken));
             var jiraConn = Atlassian.Jira.Jira.CreateRestClient((string)Jira.Url, (string)Jira.UserId, (string)Jira.Password);
 
+            var boards = jiraConn.Boards(System.Configuration.ConfigurationManager.AppSettings[Const.JiraProject]).AsEmptyIfNull();
+            if (boards.Count() != 1) Console.WriteLine($"{boards.Count()} found, so unable to determine active sprints for the Jira Project");
+            if (boards.Any())
+            {
+                ActiveSprints = jiraConn.Sprints(boards.First().Id);
+                Console.WriteLine($"Active sprints: {string.Join(", ", ActiveSprints.Select(s => s.Name))}");
+            }
+
             foreach (var jql in jiraQueries)
             {
                 Console.WriteLine($"Processing '{jql}'");
@@ -67,8 +77,9 @@ namespace WorkitemImporter
         void SyncSprintsForIssues(VssConnection connection, IEnumerable<Issue> issues, string project)
         {
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
-            var sprints = issues.Select(i => i.CustomFields["Sprint"].Values.LastOrDefault()).Where(i => i != null)
-                .Distinct().Select(i => i.Replace("/", string.Empty));
+            var sprints = issues.SelectMany(i => i.PreferredSprint(ActiveSprints)) // CustomFields["Sprint"].Values.LastOrDefault()).Where(i => i != null)
+                .Where(i => i != null)
+                .Distinct().Select(i => i.Replace("/", "-"));
             foreach (var sprint in sprints)
             {
                 InvokeIfNotProcessed($"sprint-{sprint}", () =>
@@ -80,6 +91,7 @@ namespace WorkitemImporter
                         if (Mode == ProcessingMode.ReadWrite)
                         {
                             var unused = witClient.CreateOrUpdateClassificationNodeAsync(new WorkItemClassificationNode() { Name = sprint, }, Vsts.Project, TreeStructureGroup.Iterations).Result;
+                            Console.WriteLine($"Creating VSTS iteration {sprint}");
                         }
                     }
                 });
@@ -89,7 +101,7 @@ namespace WorkitemImporter
         /// <summary>
         /// For the issues provided ensure that the Epics are created in VSTS before processing. Ignores Epics already sync'd.
         /// </summary>
-        void SyncEpicForIssues(VssConnection connection, Atlassian.Jira.Jira jira, IEnumerable<Issue> issues)
+        void SyncEpicForIssues(VssConnection connection, Jira jira, IEnumerable<Issue> issues)
         {
             var epics = issues.Select(i => i.CustomFields["Epic Link"]?.Values.FirstOrDefault())
                 .EmptyIfNull().Trim().Distinct().ToList();
@@ -167,8 +179,8 @@ namespace WorkitemImporter
                     }
                 }
 
-                string issueSprint = issue.CustomFields["Sprint"].Values.LastOrDefault();
-                if (isNew && !string.IsNullOrEmpty(issueSprint))
+                string issueSprint = issue.PreferredSprint(ActiveSprints).FirstOrDefault();
+                if (!string.IsNullOrEmpty(issueSprint))
                 {
                     var iterations = witClient.GetClassificationNodeAsync(Vsts.Project, TreeStructureGroup.Iterations, null, 10).Result.Children;
                     var iteration = iterations.FirstOrDefault(i => i.Name.Equals(issueSprint, StringComparison.OrdinalIgnoreCase));
@@ -181,6 +193,16 @@ namespace WorkitemImporter
                     ? witClient.CreateWorkItemAsync(doc, Vsts.Project, issueType, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result
                     : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result;
             }
+        }
+    }
+
+    public static class IssueEx
+    {
+        public static IEnumerable<string> PreferredSprint(this Issue issue, IEnumerable<JiraSprint> activeSprints)
+        {
+            var issueSprints = issue.CustomFields["Sprint"].Values.EmptyIfNull();
+            var result = issueSprints.Intersect(activeSprints.Select(a => a.Name));
+            return result;
         }
     }
 }
