@@ -140,6 +140,19 @@ namespace WorkitemImporter
                 });
             }
 
+            Dictionary<int, List<string>> commentsHistory = new Dictionary<int, List<string>>();
+
+            void AddCommentToCommentHistory(int id, string comment)
+            {
+                if (!commentsHistory.TryGetValue(id, out List<string> existing))
+                {
+                    existing = new List<string>();
+                    commentsHistory[id] = existing;
+                }
+                
+                existing.Add(comment);
+            }            
+
             var witClient = connection.GetClient<WorkItemTrackingHttpClient>();
             foreach (var issue in issues)
             {
@@ -148,6 +161,11 @@ namespace WorkitemImporter
 
                 var doc = new JsonPatchDocument();
 
+                // Add FixVersions and Labels as tags to VSTS workitem
+                List<string> tags = new List<string>();
+                tags.AddRange(issue.FixVersions.Select(item => item.Name));
+                tags.AddRange(issue.Labels);
+
                 AddField(doc, "System.Title", $"{issue.Key.ToString()} {issue.Summary}");
                 AddField(doc, "System.Description", issue.Description);
                 AddField(doc, "System.CreatedBy", issue.Reporter.AsJiraUserToVsts());
@@ -155,7 +173,9 @@ namespace WorkitemImporter
                 AddField(doc, "Microsoft.VSTS.Scheduling.StoryPoints", issue.CustomFields["Story Points"]?.Values.FirstOrDefault());
                 AddField(doc, "System.State", issue.Status.ToVsts());
                 AddField(doc, "Microsoft.VSTS.Common.Priority", issue.Priority.ToVsts());
-                AddField(doc, "System.Tags", string.Join(";", issue.Labels));
+                AddField(doc, "System.Tags", string.Join(";", tags));
+
+                IEnumerable<Comment> comments = issue.GetCommentsAsync().Result;
 
                 if (isNew)
                 {
@@ -192,6 +212,31 @@ namespace WorkitemImporter
                 var workItem = isNew
                     ? witClient.CreateWorkItemAsync(doc, Vsts.Project, issueType, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result
                     : witClient.UpdateWorkItemAsync(doc, existingWorkItemId.Value, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly).Result;
+
+                IEnumerable<Comment> commentsArray = comments as Comment[] ?? comments.ToArray();
+                if (workItem.Id.HasValue && commentsArray.Any())
+                {
+                    foreach (var comment in commentsArray)
+                    {
+                        AddCommentToCommentHistory(workItem.Id.Value, $"{comment.CreatedDate} - {comment.Author}: {comment.Body}");
+                    }
+                }
+            }
+            
+            foreach (var issueId in commentsHistory.Keys)
+            {
+                if (commentsHistory[issueId] != null)
+                {
+                    foreach (var comment in commentsHistory[issueId])
+                    {
+                        if (!string.IsNullOrWhiteSpace(comment))
+                        {
+                            var updateDocument = new JsonPatchDocument();
+                            AddField(updateDocument, "System.History", comment);
+                            witClient.UpdateWorkItemAsync(updateDocument, issueId, bypassRules: true, validateOnly: Mode == ProcessingMode.ReadOnly);
+                        }
+                    }
+                }
             }
         }
     }
@@ -200,8 +245,13 @@ namespace WorkitemImporter
     {
         public static IEnumerable<string> PreferredSprint(this Issue issue, IEnumerable<JiraSprint> activeSprints)
         {
+            if (activeSprints == null)
+            {
+                return null;
+            }
+
             var issueSprints = issue.CustomFields["Sprint"].Values.EmptyIfNull();
-            var result = issueSprints.Intersect(activeSprints.Select(a => a.Name));
+            var result = issueSprints?.Intersect(activeSprints.Select(a => a.Name));
             return result;
         }
     }
